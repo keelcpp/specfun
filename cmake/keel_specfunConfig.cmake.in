@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(keel)
+
+include("${CMAKE_CURRENT_LIST_DIR}/keel_specfunTargets.cmake")
+
+if(TARGET keel::keel_specfun AND NOT TARGET keel::specfun)
+    add_library(keel::specfun ALIAS keel::keel_specfun)
+endif()
+
+check_required_components(keel_specfun)
