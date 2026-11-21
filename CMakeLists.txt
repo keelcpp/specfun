@@ -18,7 +18,7 @@ if(NOT TARGET keel::keel)
     FetchContent_Declare(
         keel
         GIT_REPOSITORY https://github.com/keelcpp/keel.git
-        GIT_TAG        b905b095c1b30d5162794c160b2841544a4a4e12
+        GIT_TAG        869a5c07a5d77341e5f6acbac5f8e024b274ea08
     )
     FetchContent_MakeAvailable(keel)
 endif()
@@ -64,6 +64,7 @@ if(COMMAND keel_enforce_guidelines)
     keel_enforce_guidelines(keel_specfun
         SCOPE ALL
         BAN_RAW_INTS ALL
+        BAN_RAW_FLOATS ALL
         HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include"
         STANDALONE_HEADERS ${KEEL_SPECFUN_BUILD_TESTS}
         TEST_NAME test_guidelines_headers
