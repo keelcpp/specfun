@@ -8,7 +8,7 @@ namespace keel::specfun {
 f64 factorial(u64 n) noexcept {
     if (n > 170) return Limits<f64>::infinity();
     f64 r = 1.0;
-    for (u64 i = 2; i <= n; ++i) r *= static_cast<f64>(i);
+    for (u64 i = 2; i <= n; ++i) r *= as<f64>(i);
     return r;
 }
 
@@ -18,7 +18,7 @@ f64 nchoosek(u64 n, u64 k) noexcept {
     if (kk == 0) return 1.0;
     f64 r = 1.0;
     for (u64 i = 0; i < kk; ++i) {
-        r = r * static_cast<f64>(n - i) / static_cast<f64>(i + 1);
+        r = r * as<f64>(n - i) / as<f64>(i + 1);
     }
     return keel::round(r);
 }
@@ -37,18 +37,18 @@ Array<u64> primes_up_to(u64 n, Allocator* alloc) {
     Array<u64> out(alloc);
     if (n < 2) return out;
     ArenaTemp scratch = get_scratch(alloc);
-    Array<u8> composite(static_cast<usize>(n + 1), u8{0}, scratch.allocator());
+    Array<u8> composite(as<usize>(n + 1), u8{0}, scratch.allocator());
     for (u64 i = 2; i <= n / i; ++i) {
-        if (!composite[static_cast<usize>(i)]) {
+        if (!composite[as<usize>(i)]) {
             for (u64 j = i * i; j <= n; j += i) {
-                composite[static_cast<usize>(j)] = 1;
+                composite[as<usize>(j)] = 1;
             }
         }
     }
-    const usize est = static_cast<usize>(static_cast<f64>(n) / keel::log(static_cast<f64>(n) + 1.0)) + 2;
+    const usize est = as<usize>(as<f64>(n) / keel::log(as<f64>(n) + 1.0)) + 2;
     out.reserve(est);
     for (u64 i = 2; i <= n; ++i) {
-        if (!composite[static_cast<usize>(i)]) out.push_back(i);
+        if (!composite[as<usize>(i)]) out.push_back(i);
     }
     return out;
 }

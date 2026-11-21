@@ -28,7 +28,7 @@ constexpr f64 kLanczosC[9] = {
 f64 lanczos_sum(f64 z) noexcept {
     f64 x = kLanczosC[0];
     for (i32 i = 1; i < 9; ++i) {
-        x += kLanczosC[i] / (z + static_cast<f64>(i));
+        x += kLanczosC[i] / (z + as<f64>(i));
     }
     return x;
 }
@@ -211,7 +211,7 @@ f64 gcf_upper(f64 a, f64 x) noexcept {
     f64 d = 1.0 / b;
     f64 h = d;
     for (i32 i = 1; i <= kMaxIter; ++i) {
-        const f64 fi = static_cast<f64>(i);
+        const f64 fi = as<f64>(i);
         const f64 an = -fi * (fi - a);
         b += 2.0;
         d = an * d + b;
@@ -239,7 +239,7 @@ f64 betacf(f64 a, f64 b, f64 x) noexcept {
     d = 1.0 / d;
     f64 h = d;
     for (i32 m = 1; m <= kMaxIter; ++m) {
-        const f64 fm = static_cast<f64>(m);
+        const f64 fm = as<f64>(m);
         const f64 m2 = 2.0 * fm;
         f64 aa = fm * (b - fm) * x / ((qam + m2) * (a + m2));
         d = 1.0 + aa * d;
@@ -293,9 +293,9 @@ f64 gamma(f64 x) noexcept {
 
     // Small positive integers: exact factorials up to 22! (23! exceeds 53-bit exactness).
     if (x >= 1.0 && x <= 23.0 && x == keel::floor(x)) {
-        const i32 n = static_cast<i32>(x);
+        const i32 n = as<i32>(x);
         f64 res = 1.0;
-        for (i32 k = 2; k < n; ++k) res *= static_cast<f64>(k);
+        for (i32 k = 2; k < n; ++k) res *= as<f64>(k);
         return res;
     }
 
@@ -528,7 +528,7 @@ f64 expint(f64 x) noexcept {
         f64 term = 1.0;
         f64 sum = 0.0;
         for (i32 n = 1; n <= 100; ++n) {
-            const f64 fn = static_cast<f64>(n);
+            const f64 fn = as<f64>(n);
             term *= -x / fn;
             const f64 add = -term / fn;
             sum += add;
@@ -542,7 +542,7 @@ f64 expint(f64 x) noexcept {
     f64 d = 1.0 / b;
     f64 h = d;
     for (i32 i = 1; i <= 200; ++i) {
-        const f64 fi = static_cast<f64>(i);
+        const f64 fi = as<f64>(i);
         const f64 a = -(fi * fi);
         b += 2.0;
         d = 1.0 / (a * d + b);
@@ -559,31 +559,31 @@ f64 expint(f64 x) noexcept {
 // ============================================================================
 
 void legendre(i32 n, f64 x, MutArrayRef<f64> out) noexcept {
-    if (n < 0 || out.size() < static_cast<usize>(n) + 1) return;
+    if (n < 0 || out.size() < as<usize>(n) + 1) return;
     const f64 sx = keel::sqrt(keel::max(0.0, 1.0 - x * x));
     for (i32 m = 0; m <= n; ++m) {
         f64 pmm = 1.0;
         for (i32 i = 1; i <= m; ++i) {
-            pmm *= -(2.0 * static_cast<f64>(i) - 1.0) * sx;
+            pmm *= -(2.0 * as<f64>(i) - 1.0) * sx;
         }
         if (n == m) {
-            out[static_cast<usize>(m)] = pmm;
+            out[as<usize>(m)] = pmm;
             continue;
         }
-        f64 pmmp1 = x * (2.0 * static_cast<f64>(m) + 1.0) * pmm;
+        f64 pmmp1 = x * (2.0 * as<f64>(m) + 1.0) * pmm;
         if (n == m + 1) {
-            out[static_cast<usize>(m)] = pmmp1;
+            out[as<usize>(m)] = pmmp1;
             continue;
         }
         f64 pll = 0.0;
         for (i32 l = m + 2; l <= n; ++l) {
-            const f64 fl = static_cast<f64>(l);
-            const f64 fm = static_cast<f64>(m);
+            const f64 fl = as<f64>(l);
+            const f64 fm = as<f64>(m);
             pll = ((2.0 * fl - 1.0) * x * pmmp1 - (fl + fm - 1.0) * pmm) / (fl - fm);
             pmm = pmmp1;
             pmmp1 = pll;
         }
-        out[static_cast<usize>(m)] = pmmp1;
+        out[as<usize>(m)] = pmmp1;
     }
 }
 
@@ -673,17 +673,17 @@ f64 marcumq(f64 a, f64 b, i32 m) noexcept {
         f64 term = keel::exp(-y);
         for (i32 k = 0; k < m; ++k) {
             acc += term;
-            term *= y / static_cast<f64>(k + 1);
+            term *= y / as<f64>(k + 1);
         }
         return acc;
     }
     const f64 upper = keel::max(b + 20.0, a + 20.0);
     constexpr i32 kSteps = 4096;
-    const f64 dx = (upper - b) / static_cast<f64>(kSteps);
+    const f64 dx = (upper - b) / as<f64>(kSteps);
     f64 sum = 0.0;
-    const f64 fm1 = static_cast<f64>(m - 1);
+    const f64 fm1 = as<f64>(m - 1);
     for (i32 k = 0; k <= kSteps; ++k) {
-        const f64 xv = b + static_cast<f64>(k) * dx;
+        const f64 xv = b + as<f64>(k) * dx;
         const f64 w = (k == 0 || k == kSteps) ? 1.0 : ((k & 1) ? 4.0 : 2.0);
         const f64 f = xv * keel::pow(xv / a, fm1) * keel::exp(-0.5 * (xv * xv + a * a)) *
                       besseli(fm1, a * xv);

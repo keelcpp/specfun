@@ -10,7 +10,7 @@ keel::i32 g_failed = 0;
 
 void check(bool cond, const char* expr, keel::i32 line) {
     if (!cond) {
-        std::fprintf(stderr, "FAIL [line %d]: %s\n", static_cast<int>(line), expr);
+        std::fprintf(stderr, "FAIL [line %d]: %s\n", keel::as<int>(line), expr);
         ++g_failed;
     }
 }
@@ -19,7 +19,7 @@ void check_near(keel::f64 got, keel::f64 expected, keel::f64 tol, const char* ex
     const keel::f64 diff = keel::abs(got - expected);
     if (keel::is_nan(got) || diff > tol) {
         std::fprintf(stderr, "FAIL [line %d]: %s (got %.17g, expected %.17g, diff %.3e > tol %.3e)\n",
-                     static_cast<int>(line), expr, got, expected, diff, tol);
+                     keel::as<int>(line), expr, got, expected, diff, tol);
         ++g_failed;
     }
 }
@@ -194,7 +194,7 @@ int main() {
     test_legendre_ellip_marcum_comb();
 
     if (g_failed != 0) {
-        std::fprintf(stderr, "test_specfun: %d failure(s)\n", static_cast<int>(g_failed));
+        std::fprintf(stderr, "test_specfun: %d failure(s)\n", keel::as<int>(g_failed));
         return 1;
     }
     std::printf("test_specfun: all tests passed\n");

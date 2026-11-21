@@ -48,9 +48,9 @@ void beschb(f64 x, f64& gam1, f64& gam2, f64& gampl, f64& gammi) noexcept {
 // Computes J_xnu(x), Y_xnu(x), J'_xnu(x), Y'_xnu(x) for x > 0 and xnu >= 0
 // via Steed's continued fractions + Temme's series (Numerical Recipes bessjy).
 void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
-    const i32 nl = (x < kXMin) ? static_cast<i32>(xnu + 0.5)
-                               : keel::max(i32{0}, static_cast<i32>(xnu - x + 1.5));
-    const f64 xmu = xnu - static_cast<f64>(nl);
+    const i32 nl = (x < kXMin) ? as<i32>(xnu + 0.5)
+                               : keel::max(i32{0}, as<i32>(xnu - x + 1.5));
+    const f64 xmu = xnu - as<f64>(nl);
     const f64 xmu2 = xmu * xmu;
     const f64 xi = 1.0 / x;
     const f64 xi2 = 2.0 * xi;
@@ -75,7 +75,7 @@ void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
         if (keel::abs(del - 1.0) < kEps) break;
     }
 
-    f64 rjl = static_cast<f64>(isign) * kFpMin;
+    f64 rjl = as<f64>(isign) * kFpMin;
     f64 rjpl = h * rjl;
     const f64 rjl1 = rjl;
     const f64 rjp1 = rjpl;
@@ -118,7 +118,7 @@ void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
         f64 sum = ff + r * q;
         f64 sum1 = p;
         for (i32 i = 1; i <= kMaxIter; ++i) {
-            const f64 fi = static_cast<f64>(i);
+            const f64 fi = as<f64>(i);
             ff = (fi * ff + p + q) / (fi * fi - xmu2);
             c *= d / fi;
             p /= (fi - xmu);
@@ -151,7 +151,7 @@ void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
         q = pq * dli + q * dlr;
         pq = temp;
         for (i32 i = 2; i <= kMaxIter; ++i) {
-            a += static_cast<f64>(2 * (i - 1));
+            a += as<f64>(2 * (i - 1));
             bi += 2.0;
             dr = a * dr + br;
             di = a * di + bi;
@@ -182,7 +182,7 @@ void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
     rj = rjl1 * fact;
     rjp = rjp1 * fact;
     for (i32 i = 1; i <= nl; ++i) {
-        const f64 rytemp = (xmu + static_cast<f64>(i)) * xi2 * ry1 - rymu;
+        const f64 rytemp = (xmu + as<f64>(i)) * xi2 * ry1 - rymu;
         rymu = ry1;
         ry1 = rytemp;
     }
@@ -193,8 +193,8 @@ void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
 // Computes I_xnu(x), K_xnu(x), I'_xnu(x), K'_xnu(x) for x > 0 and xnu >= 0
 // via Steed's continued fractions + Temme's series (Numerical Recipes bessik).
 void bessik(f64 x, f64 xnu, f64& ri, f64& rk, f64& rip, f64& rkp) noexcept {
-    const i32 nl = static_cast<i32>(xnu + 0.5);
-    const f64 xmu = xnu - static_cast<f64>(nl);
+    const i32 nl = as<i32>(xnu + 0.5);
+    const f64 xmu = xnu - as<f64>(nl);
     const f64 xmu2 = xmu * xmu;
     const f64 xi = 1.0 / x;
     const f64 xi2 = 2.0 * xi;
@@ -249,7 +249,7 @@ void bessik(f64 x, f64 xnu, f64& ri, f64& rk, f64& rip, f64& rkp) noexcept {
         d = x2 * x2;
         f64 sum1 = p;
         for (i32 i = 1; i <= kMaxIter; ++i) {
-            const f64 fi = static_cast<f64>(i);
+            const f64 fi = as<f64>(i);
             ff = (fi * ff + p + q) / (fi * fi - xmu2);
             c *= d / fi;
             p /= (fi - xmu);
@@ -275,7 +275,7 @@ void bessik(f64 x, f64 xnu, f64& ri, f64& rk, f64& rip, f64& rkp) noexcept {
         f64 a = -a1;
         f64 s = 1.0 + q * delh;
         for (i32 i = 2; i <= kMaxIter; ++i) {
-            const f64 fi = static_cast<f64>(i);
+            const f64 fi = as<f64>(i);
             a -= 2.0 * (fi - 1.0);
             c_cf = -a * c_cf / fi;
             const f64 qnew = (q1 - b * q2) / a;
@@ -300,7 +300,7 @@ void bessik(f64 x, f64 xnu, f64& ri, f64& rk, f64& rip, f64& rkp) noexcept {
     ri = (rimu * ril1) / ril;
     rip = (rimu * rip1) / ril;
     for (i32 i = 1; i <= nl; ++i) {
-        const f64 rktemp = (xmu + static_cast<f64>(i)) * xi2 * rk1 + rkmu;
+        const f64 rktemp = (xmu + as<f64>(i)) * xi2 * rk1 + rkmu;
         rkmu = rk1;
         rk1 = rktemp;
     }
@@ -327,14 +327,14 @@ f64 besselj(f64 nu, f64 x) noexcept {
     if (is_inf(x)) return 0.0;
     if (x < 0.0) {
         if (!is_near_integer(nu)) return Limits<f64>::quiet_nan();
-        const i64 n = static_cast<i64>(keel::round(nu));
+        const i64 n = as<i64>(keel::round(nu));
         const f64 v = besselj(nu, -x);
         return (n & 1) ? -v : v;
     }
     if (nu < 0.0) {
         const f64 anu = -nu;
         if (is_near_integer(anu)) {
-            const i64 n = static_cast<i64>(keel::round(anu));
+            const i64 n = as<i64>(keel::round(anu));
             f64 rj = 0.0, ry = 0.0, rjp = 0.0, ryp = 0.0;
             bessjy(x, anu, rj, ry, rjp, ryp);
             return (n & 1) ? -rj : rj;
@@ -356,7 +356,7 @@ f64 bessely(f64 nu, f64 x) noexcept {
     if (nu < 0.0) {
         const f64 anu = -nu;
         if (is_near_integer(anu)) {
-            const i64 n = static_cast<i64>(keel::round(anu));
+            const i64 n = as<i64>(keel::round(anu));
             f64 rj = 0.0, ry = 0.0, rjp = 0.0, ryp = 0.0;
             bessjy(x, anu, rj, ry, rjp, ryp);
             return (n & 1) ? -ry : ry;
@@ -380,7 +380,7 @@ f64 besseli(f64 nu, f64 x) noexcept {
     }
     if (x < 0.0) {
         if (!is_near_integer(nu)) return Limits<f64>::quiet_nan();
-        const i64 n = static_cast<i64>(keel::round(nu));
+        const i64 n = as<i64>(keel::round(nu));
         const f64 v = besseli(nu, -x);
         return (n & 1) ? -v : v;
     }
