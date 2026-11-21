@@ -2,7 +2,7 @@
 
 #include "keel/math.h"
 
-namespace keel {
+namespace keel::specfun {
 
 namespace {
 
@@ -459,4 +459,4 @@ f64 airy(i32 k, f64 x) noexcept {
     return (ax * kInvSqrt3) * (besselj(2.0 / 3.0, zeta) + besselj(-2.0 / 3.0, zeta));
 }
 
-} // namespace keel
+} // namespace keel::specfun

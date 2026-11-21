@@ -3,7 +3,7 @@
 #include "keel/arena.h"
 #include "keel/math.h"
 
-namespace keel {
+namespace keel::specfun {
 
 f64 factorial(u64 n) noexcept {
     if (n > 170) return Limits<f64>::infinity();
@@ -74,4 +74,4 @@ Array<u64> factor_u64(u64 n, Allocator* alloc) {
     return out;
 }
 
-} // namespace keel
+} // namespace keel::specfun

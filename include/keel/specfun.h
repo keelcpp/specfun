@@ -6,7 +6,7 @@
 #include "keel/memory.h"
 #include "keel/ref.h"
 
-namespace keel {
+namespace keel::specfun {
 
 // ============================================================================
 // 1. Gamma, Digamma & Incomplete Gamma Functions
@@ -156,4 +156,4 @@ struct EllipJ {
 /// Prime factorization of n in ascending order with multiplicity (returns {n} for n <= 1).
 [[nodiscard]] Array<u64> factor_u64(u64 n, Allocator* alloc = nullptr);
 
-} // namespace keel
+} // namespace keel::specfun

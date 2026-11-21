@@ -2,7 +2,7 @@
 
 #include "keel/math.h"
 
-namespace keel {
+namespace keel::specfun {
 
 namespace {
 
@@ -692,4 +692,4 @@ f64 marcumq(f64 a, f64 b, i32 m) noexcept {
     return sum * (dx / 3.0);
 }
 
-} // namespace keel
+} // namespace keel::specfun
