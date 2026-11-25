@@ -1,8 +1,6 @@
-#include "keel/specfun.h"
+#include "keel/format.h"
 #include "keel/math.h"
-
-#include <cmath>
-#include <cstdio>
+#include "keel/specfun.h"
 
 namespace {
 
@@ -10,7 +8,7 @@ keel::i32 g_failed = 0;
 
 void check(bool cond, const char* expr, keel::i32 line) {
     if (!cond) {
-        std::fprintf(stderr, "FAIL [line %d]: %s\n", keel::as<int>(line), expr);
+        keel::eprintln("FAIL [line %d]: %s", line, expr);
         ++g_failed;
     }
 }
@@ -18,8 +16,8 @@ void check(bool cond, const char* expr, keel::i32 line) {
 void check_near(keel::f64 got, keel::f64 expected, keel::f64 tol, const char* expr, keel::i32 line) {
     const keel::f64 diff = keel::abs(got - expected);
     if (keel::is_nan(got) || diff > tol) {
-        std::fprintf(stderr, "FAIL [line %d]: %s (got %.17g, expected %.17g, diff %.3e > tol %.3e)\n",
-                     keel::as<int>(line), expr, got, expected, diff, tol);
+        keel::eprintln("FAIL [line %d]: %s (got %.17g, expected %.17g, diff %.3e > tol %.3e)",
+                       line, expr, got, expected, diff, tol);
         ++g_failed;
     }
 }
@@ -37,11 +35,11 @@ void test_gamma_beta() {
     CHECK(keel::specfun::gammaln(1.0) == 0.0);
     CHECK(keel::specfun::gammaln(2.0) == 0.0);
 
-    // Cross-check against std::tgamma / std::lgamma across positive and negative values.
+    // Cross-check against keel::tgamma / keel::lgamma across positive and negative values.
     const keel::f64 xs[] = {-3.5, -1.25, -0.5, 0.1, 0.5, 1.5, 2.7, 5.2, 12.3, 50.0, 150.0};
     for (keel::f64 x : xs) {
-        const keel::f64 ref_g = std::tgamma(x);
-        const keel::f64 ref_lg = std::lgamma(x);
+        const keel::f64 ref_g = keel::tgamma(x);
+        const keel::f64 ref_lg = keel::lgamma(x);
         CHECK_NEAR(keel::specfun::gamma(x), ref_g, 1e-12 * keel::max(1.0, keel::abs(ref_g)));
         CHECK_NEAR(keel::specfun::gammaln(x), ref_lg, 1e-12 * keel::max(1.0, keel::abs(ref_lg)));
     }
@@ -55,7 +53,7 @@ void test_gamma_beta() {
 
     // Beta & betaln.
     CHECK_NEAR(keel::specfun::beta(2.0, 3.0), 1.0 / 12.0, 1e-14);
-    CHECK_NEAR(keel::specfun::betaln(10.0, 20.0), std::lgamma(10.0) + std::lgamma(20.0) - std::lgamma(30.0), 1e-12);
+    CHECK_NEAR(keel::specfun::betaln(10.0, 20.0), keel::lgamma(10.0) + keel::lgamma(20.0) - keel::lgamma(30.0), 1e-12);
 
     // Incomplete gamma & inverse.
     CHECK_NEAR(keel::specfun::gammainc(1.0, 1.0), 1.0 - keel::exp(-1.0), 1e-14);
@@ -73,11 +71,11 @@ void test_gamma_beta() {
 void test_erf_and_expint() {
     const keel::f64 xs[] = {-20.0, -5.0, -1.5, -0.3, 0.0, 0.25, 0.46875, 1.0, 3.5, 5.0, 10.0, 25.0};
     for (keel::f64 x : xs) {
-        CHECK_NEAR(keel::specfun::erf(x), std::erf(x), 1e-14);
-        CHECK_NEAR(keel::specfun::erfc(x), std::erfc(x), 1e-14 * keel::max(1.0, std::erfc(x)));
+        CHECK_NEAR(keel::specfun::erf(x), keel::erf(x), 1e-14);
+        CHECK_NEAR(keel::specfun::erfc(x), keel::erfc(x), 1e-14 * keel::max(1.0, keel::erfc(x)));
     }
     CHECK_NEAR(keel::specfun::erfcx(0.0), 1.0, 1e-14);
-    CHECK_NEAR(keel::specfun::erfcx(1.0), keel::exp(1.0) * std::erfc(1.0), 1e-14);
+    CHECK_NEAR(keel::specfun::erfcx(1.0), keel::exp(1.0) * keel::erfc(1.0), 1e-14);
     CHECK_NEAR(keel::specfun::erfcx(50.0), 1.0 / (50.0 * keel::sqrt(keel::kPi)), 1e-5);
     CHECK_NEAR(keel::specfun::erfcx(1e6), 1.0 / (1e6 * keel::sqrt(keel::kPi)), 1e-18);
 
@@ -97,22 +95,29 @@ void test_erf_and_expint() {
 }
 
 void test_bessel_and_airy() {
-#if defined(__cpp_lib_math_special_functions)
-    const keel::f64 nus[] = {0.0, 1.0, 2.0, 5.0, 0.5, 1.0 / 3.0, 2.0 / 3.0, 2.5};
-    const keel::f64 xs[] = {0.2, 1.0, 1.9, 2.0, 2.1, 5.0, 15.0, 40.0};
-    for (keel::f64 nu : nus) {
-        for (keel::f64 x : xs) {
-            const keel::f64 rj = std::cyl_bessel_j(nu, x);
-            const keel::f64 ry = std::cyl_neumann(nu, x);
-            const keel::f64 ri = std::cyl_bessel_i(nu, x);
-            const keel::f64 rk = std::cyl_bessel_k(nu, x);
-            CHECK_NEAR(keel::specfun::besselj(nu, x), rj, 1e-11 * keel::max(1.0, keel::abs(rj)));
-            CHECK_NEAR(keel::specfun::bessely(nu, x), ry, 1e-11 * keel::max(1.0, keel::abs(ry)));
-            CHECK_NEAR(keel::specfun::besseli(nu, x), ri, 1e-11 * keel::max(1.0, keel::abs(ri)));
-            CHECK_NEAR(keel::specfun::besselk(nu, x), rk, 1e-11 * keel::max(1.0, keel::abs(rk)));
-        }
+    struct BesselRef {
+        keel::f64 nu;
+        keel::f64 x;
+        keel::f64 j;
+        keel::f64 y;
+        keel::f64 i;
+        keel::f64 k;
+    };
+    const BesselRef refs[] = {
+        {0.0, 1.0, 0.76519768655796661, 0.088256964215676997, 1.2660658777520084, 0.42102443824070834},
+        {1.0, 2.0, 0.57672480775687363, -0.1070324315409375, 1.5906368546373291, 0.13986588181652246},
+        {2.0, 5.0, 0.04656511627775229, 0.3676628826055246, 17.505614966624236, 0.0053089437122234599},
+        {0.5, 1.5, 0.64983807475374822, -0.0460831658930973, 1.3871617204034772, 0.2283350522282655},
+        {1.0 / 3.0, 2.5, 0.19832093341860585, 0.46145947419129091, 3.1743242297241974, 0.063542537454733372},
+        {2.5, 10.0, 0.19665848358181753, -0.16417847961494103, 2028.5127573919356, 2.3931325864627893e-05},
+        {5.0, 15.0, 0.13045613456502958, 0.16717271575940015, 144572.01120063406, 2.1878261369258221e-07},
+    };
+    for (const BesselRef& r : refs) {
+        CHECK_NEAR(keel::specfun::besselj(r.nu, r.x), r.j, 1e-11 * keel::max(1.0, keel::abs(r.j)));
+        CHECK_NEAR(keel::specfun::bessely(r.nu, r.x), r.y, 1e-11 * keel::max(1.0, keel::abs(r.y)));
+        CHECK_NEAR(keel::specfun::besseli(r.nu, r.x), r.i, 1e-11 * keel::max(1.0, keel::abs(r.i)));
+        CHECK_NEAR(keel::specfun::besselk(r.nu, r.x), r.k, 1e-11 * keel::max(1.0, keel::abs(r.k)));
     }
-#endif
     // Negative orders & negative x parity.
     CHECK_NEAR(keel::specfun::besselj(-1.0, 2.0), -keel::specfun::besselj(1.0, 2.0), 1e-14);
     CHECK_NEAR(keel::specfun::besselj(1.0, -2.0), -keel::specfun::besselj(1.0, 2.0), 1e-14);
@@ -194,9 +199,9 @@ int main() {
     test_legendre_ellip_marcum_comb();
 
     if (g_failed != 0) {
-        std::fprintf(stderr, "test_specfun: %d failure(s)\n", keel::as<int>(g_failed));
+        keel::eprintln("test_specfun: %d failure(s)", g_failed);
         return 1;
     }
-    std::printf("test_specfun: all tests passed\n");
+    keel::println("test_specfun: all tests passed");
     return 0;
 }
