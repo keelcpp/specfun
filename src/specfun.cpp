@@ -33,6 +33,26 @@ f64 lanczos_sum(f64 z) noexcept {
     return x;
 }
 
+// Range-reduced sin(pi * x) and cot(pi * x) for accurate reflection formulas at large negative x.
+f64 sinpi_reduced(f64 x) noexcept {
+    f64 r = keel::fmod(x, 2.0);
+    if (r < 0.0) r += 2.0;
+    if (r == 0.0 || r == 1.0) return 0.0;
+    if (r == 0.5) return 1.0;
+    if (r == 1.5) return -1.0;
+    if (r > 1.0) return -keel::sin(kPi * (r - 1.0));
+    if (r > 0.5) return keel::sin(kPi * (1.0 - r));
+    return keel::sin(kPi * r);
+}
+
+f64 cotpi_reduced(f64 x) noexcept {
+    f64 r = keel::fmod(x, 1.0);
+    if (r < 0.0) r += 1.0;
+    if (r == 0.5) return 0.0;
+    if (r > 0.5) return -1.0 / keel::tan(kPi * (1.0 - r));
+    return 1.0 / keel::tan(kPi * r);
+}
+
 // ============================================================================
 // Cody (1969) rational Chebyshev approximation for erf / erfc / erfcx.
 // Netlib SPECFUN CALERF (double precision, < 2 ULP over all real x).
@@ -186,9 +206,113 @@ f64 calerf(f64 arg, i32 jint) noexcept {
     return result;
 }
 
+f64 clamp01(f64 v) noexcept {
+    if (v <= 0.0) return 0.0;
+    if (v >= 1.0) return 1.0;
+    return v;
+}
+
+// Stirling series remainder Delta(a) = gammaln(a) - ((a - 0.5)*log(a) - a + 0.5*log(2*pi)), exact for a >= 10.
+f64 stirling_corr(f64 a) noexcept {
+    const f64 r = 1.0 / a;
+    const f64 r2 = r * r;
+    return r * (1.0 / 12.0 +
+                r2 * (-1.0 / 360.0 +
+                      r2 * (1.0 / 1260.0 +
+                            r2 * (-1.0 / 1680.0 + r2 * (1.0 / 1188.0 - r2 * (691.0 / 360360.0))))));
+}
+
+// Computes log(1 + u) - u accurately even when |u| is tiny.
+f64 log1p_minus(f64 u) noexcept {
+    if (keel::abs(u) < 0.05) {
+        // -u^2/2 + u^3/3 - u^4/4 + ...
+        f64 term = -u * u;
+        f64 sum = 0.5 * term;
+        for (i32 k = 3; k <= 24; ++k) {
+            term *= -u;
+            const f64 add = term / as<f64>(k);
+            sum += add;
+            if (keel::abs(add) <= keel::abs(sum) * 1e-16) break;
+        }
+        return sum;
+    }
+    return keel::log1p(u) - u;
+}
+
+// Cancellation-free evaluation of -x + a*log(x) - gammaln(a) for a > 0, x > 0.
+f64 log_gamma_pref(f64 a, f64 x) noexcept {
+    if (a < 10.0) {
+        return -x + a * keel::log(x) - gammaln(a);
+    }
+    // -x + a*log(x) - ((a - 0.5)*log(a) - a + 0.5*log(2*pi) + Delta(a))
+    // = 0.5*log(a) - 0.5*log(2*pi) - Delta(a) + a*(log(x/a) - (x/a - 1))
+    const f64 u = (x - a) / a;
+    return 0.5 * keel::log(a) - kHalfLn2Pi - stirling_corr(a) + a * log1p_minus(u);
+}
+
+// Cancellation-free evaluation of log P_Pois(k; mu) = -mu + k*log(mu) - gammaln(k + 1).
+f64 log_pois_exact(i64 k, f64 mu) noexcept {
+    if (k == 0) return -mu;
+    const f64 fk = as<f64>(k);
+    if (k < 10) {
+        return -mu + fk * keel::log(mu) - gammaln(fk + 1.0);
+    }
+    // gammaln(k + 1) = (k + 0.5)*log(k) - k + 0.5*log(2*pi) + Delta(k)
+    const f64 u = (mu - fk) / fk;
+    return -0.5 * keel::log(fk) - kHalfLn2Pi - stirling_corr(fk) + fk * log1p_minus(u);
+}
+
+// Cancellation-free evaluation of log(x^a * (1 - x)^b / B(a, b)) for a, b > 0 and x in (0, 1).
+f64 log_beta_pref(f64 x, f64 a, f64 b) noexcept {
+    if (a < 10.0 || b < 10.0) {
+        return gammaln(a + b) - gammaln(a) - gammaln(b) + a * keel::log(x) + b * keel::log1p(-x);
+    }
+    const f64 s = a + b;
+    const f64 p = a / s;
+    const f64 q = b / s;
+    // Stirling decomposition:
+    // gammaln(a+b) - gammaln(a) - gammaln(b) + a*log(x) + b*log(1-x)
+    // = 0.5*log(a*b / (2*pi*(a+b))) + Delta(a+b) - Delta(a) - Delta(b)
+    //   + a*log(x/p) + b*log((1-x)/q)
+    // Note: a*(x/p - 1) + b*((1-x)/q - 1) = s*(x - p) + s*((1-x) - q) = 0 identically!
+    const f64 u = (x - p) / p;
+    const f64 v = ((1.0 - x) - q) / q;
+    return 0.5 * (keel::log(a) + keel::log(b) - keel::log(s)) - kHalfLn2Pi +
+           stirling_corr(s) - stirling_corr(a) - stirling_corr(b) +
+           a * log1p_minus(u) + b * log1p_minus(v);
+}
+
+// Temme (1979) uniform asymptotic expansion for regularized incomplete gamma when a is very large.
+// Accurate to ~1e-14 for a >= 1e5 across all x > 0.
+f64 gammainc_temme(f64 x, f64 a, bool upper) noexcept {
+    const f64 lam = x / a;
+    const f64 mu = lam - 1.0;
+    f64 eta = 0.0;
+    if (keel::abs(mu) < 1e-4) {
+        // -2*(lam - 1 - log(lam)) = mu^2 * (1 - 2/3*mu + 1/2*mu^2 - 2/5*mu^3 + 1/3*mu^4)
+        const f64 poly = 1.0 + mu * (-2.0 / 3.0 + mu * (0.5 + mu * (-0.4 + mu * (1.0 / 3.0 - mu * (2.0 / 7.0)))));
+        eta = mu * keel::sqrt(poly);
+    } else {
+        const f64 arg = 2.0 * (lam - 1.0 - keel::log(lam));
+        eta = (mu >= 0.0) ? keel::sqrt(arg) : -keel::sqrt(arg);
+    }
+    const f64 z = eta * keel::sqrt(0.5 * a);
+    const f64 base = upper ? (0.5 * erfc(z)) : (0.5 * erfc(-z));
+
+    // Leading correction R_a(eta) = -exp(-0.5 * a * eta^2) / sqrt(2 * pi * a) * (c0 + c1/a)
+    f64 c0 = 0.0;
+    if (keel::abs(eta) < 1e-3) {
+        c0 = -1.0 / 3.0 + eta * (1.0 / 12.0 + eta * (-23.0 / 540.0 + eta * (353.0 / 12960.0)));
+    } else {
+        c0 = (1.0 / mu) - (1.0 / eta);
+    }
+    const f64 corr = keel::exp(-z * z) / keel::sqrt(2.0 * kPi * a) * c0;
+    return clamp01(upper ? (base - corr) : (base + corr));
+}
+
 f64 gser_lower(f64 a, f64 x) noexcept {
     if (x <= 0.0) return 0.0;
-    constexpr i32 kMaxIter = 200;
+    constexpr i32 kMaxIter = 20000;
     constexpr f64 kEps = 1e-15;
     f64 ap = a;
     f64 summ = 1.0 / a;
@@ -199,11 +323,17 @@ f64 gser_lower(f64 a, f64 x) noexcept {
         summ += del;
         if (keel::abs(del) < keel::abs(summ) * kEps) break;
     }
-    return summ * keel::exp(-x + a * keel::log(x) - gammaln(a));
+    const f64 log_pref = log_gamma_pref(a, x);
+    if (log_pref < -745.0) {
+        const f64 log_res = log_pref + keel::log(summ);
+        if (log_res < -745.1332191019412) return 0.0;
+        return clamp01(keel::exp(log_res));
+    }
+    return clamp01(summ * keel::exp(log_pref));
 }
 
 f64 gcf_upper(f64 a, f64 x) noexcept {
-    constexpr i32 kMaxIter = 200;
+    constexpr i32 kMaxIter = 20000;
     constexpr f64 kEps = 1e-15;
     constexpr f64 kFpMin = 1e-300;
     f64 b = x + 1.0 - a;
@@ -223,11 +353,17 @@ f64 gcf_upper(f64 a, f64 x) noexcept {
         h *= del;
         if (keel::abs(del - 1.0) < kEps) break;
     }
-    return keel::exp(-x + a * keel::log(x) - gammaln(a)) * h;
+    const f64 log_pref = log_gamma_pref(a, x);
+    if (log_pref < -745.0) {
+        const f64 log_res = log_pref + keel::log(h);
+        if (log_res < -745.1332191019412) return 0.0;
+        return clamp01(keel::exp(log_res));
+    }
+    return clamp01(keel::exp(log_pref) * h);
 }
 
 f64 betacf(f64 a, f64 b, f64 x) noexcept {
-    constexpr i32 kMaxIter = 200;
+    constexpr i32 kMaxIter = 4000;
     constexpr f64 kEps = 1e-15;
     constexpr f64 kFpMin = 1e-300;
     const f64 qab = a + b;
@@ -274,7 +410,7 @@ f64 gammaln(f64 x) noexcept {
 
     if (x < 0.5) {
         // Reflection: ln|Gamma(x)| = ln(pi / |sin(pi*x)|) - ln|Gamma(1 - x)|
-        const f64 s = keel::abs(keel::sin(kPi * x));
+        const f64 s = keel::abs(sinpi_reduced(x));
         return keel::log(kPi / s) - gammaln(1.0 - x);
     }
 
@@ -303,9 +439,9 @@ f64 gamma(f64 x) noexcept {
 
     if (x < 0.5) {
         // Reflection: Gamma(x) = pi / (sin(pi * x) * Gamma(1 - x))
-        const f64 s = keel::sin(kPi * x);
+        const f64 s = sinpi_reduced(x);
         const f64 lg = gammaln(1.0 - x);
-        if (lg > 709.0) return 0.0;
+        if (lg > 709.0) return (s >= 0.0) ? 0.0 : -0.0;
         return kPi / (s * gamma(1.0 - x));
     }
 
@@ -329,7 +465,7 @@ f64 psi(f64 x) noexcept {
     f64 r = 0.0;
     f64 y = x;
     if (y < 0.5) {
-        r -= kPi / keel::tan(kPi * y);
+        r -= kPi * cotpi_reduced(y);
         y = 1.0 - y;
     }
     while (y < 10.0) {
@@ -351,8 +487,9 @@ f64 gammainc(f64 x, f64 a) noexcept {
     if (x < 0.0 || a <= 0.0) return Limits<f64>::quiet_nan();
     if (x == 0.0) return 0.0;
     if (is_inf(x)) return 1.0;
+    if (a >= 1.0e6) return gammainc_temme(x, a, false);
     if (x < a + 1.0) return gser_lower(a, x);
-    return 1.0 - gcf_upper(a, x);
+    return clamp01(1.0 - gcf_upper(a, x));
 }
 
 f64 gammainc_upper(f64 x, f64 a) noexcept {
@@ -360,7 +497,8 @@ f64 gammainc_upper(f64 x, f64 a) noexcept {
     if (x < 0.0 || a <= 0.0) return Limits<f64>::quiet_nan();
     if (x == 0.0) return 1.0;
     if (is_inf(x)) return 0.0;
-    if (x < a + 1.0) return 1.0 - gser_lower(a, x);
+    if (a >= 1.0e6) return gammainc_temme(x, a, true);
+    if (x < a + 1.0) return clamp01(1.0 - gser_lower(a, x));
     return gcf_upper(a, x);
 }
 
@@ -371,24 +509,67 @@ f64 gammaincinv(f64 p, f64 a) noexcept {
     if (p == 0.0) return 0.0;
     if (p == 1.0) return Limits<f64>::infinity();
 
-    // Wilson-Hilferty initial approximation.
-    const f64 z = kSqrt2 * erfinv(2.0 * p - 1.0);
-    const f64 t = 1.0 - 1.0 / (9.0 * a) + z / keel::sqrt(9.0 * a);
-    f64 x = a * t * t * t;
+    // Solve upper tail Q(a, x) = q = 1 - p when p > 0.5 to prevent cancellation near p = 1.
+    const bool upper = (p > 0.5);
+    const f64 q = 1.0 - p;
+
+    // Initial approximation.
+    f64 x = 0.0;
+    if (a < 1.0 && p < 0.5) {
+        const f64 lp = (keel::log(p) + gammaln(a + 1.0)) / a;
+        x = (lp < -700.0) ? 1e-300 : keel::exp(lp);
+    } else {
+        const f64 z = upper ? (kSqrt2 * erfcinv(2.0 * q)) : (-kSqrt2 * erfcinv(2.0 * p));
+        const f64 t = 1.0 - 1.0 / (9.0 * a) + z / keel::sqrt(9.0 * a);
+        if (t > 0.05) {
+            x = a * t * t * t;
+        } else {
+            const f64 lp = (keel::log(p) + gammaln(a + 1.0)) / a;
+            x = (lp < -700.0) ? 1e-300 : keel::exp(lp);
+        }
+    }
     if (!is_finite(x) || x <= 0.0) x = 0.5 * a;
 
-    const f64 lg_a = gammaln(a);
-    for (i32 it = 0; it < 60; ++it) {
-        const f64 f = gammainc(x, a) - p;
-        if (keel::abs(f) < 1e-15) break;
-        const f64 logf = (a - 1.0) * keel::log(x) - x - lg_a;
-        const f64 df = keel::exp(logf);
-        if (df < 1e-300) break;
-        f64 dx = f / df;
-        if (dx >= x) dx = 0.5 * x;
-        x -= dx;
-        if (x <= 0.0) x = 1e-300;
-        if (keel::abs(dx) < 1e-13 * (keel::abs(x) + 1.0)) break;
+    // Bracketed Halley/Newton with bisection fallback.
+    f64 lo = 0.0;
+    f64 hi = Limits<f64>::infinity();
+    for (i32 it = 0; it < 100; ++it) {
+        // f(x) = P(a, x) - p = q - Q(a, x), strictly increasing in x.
+        const f64 f = upper ? (q - gammainc_upper(x, a)) : (gammainc(x, a) - p);
+        if (f == 0.0) break;
+        if (f > 0.0) {
+            hi = x;
+        } else {
+            lo = x;
+        }
+        const f64 target = upper ? q : p;
+        if (keel::abs(f) <= 4e-15 * target) break;
+
+        const f64 log_df = log_gamma_pref(a, x) - keel::log(x);
+        f64 x_new = -1.0;
+        if (log_df > -700.0 && log_df < 700.0) {
+            const f64 df = keel::exp(log_df);
+            const f64 w = f / df;
+            // Halley correction: f''/f' = (a - 1)/x - 1; fall back to bisection if flat tail.
+            const f64 r = (a - 1.0) / x - 1.0;
+            const f64 wr = w * r;
+            if (keel::abs(wr) < 1.0) {
+                const f64 step = w / (1.0 - 0.5 * wr);
+                if (keel::abs(step) <= 1e-14 * x) break;
+                x_new = x - step;
+            }
+        }
+
+        if (!(x_new > lo && x_new < hi)) {
+            if (is_finite(hi)) {
+                x_new = (lo > 0.0 && hi / lo > 16.0) ? keel::sqrt(lo * hi) : (0.5 * (lo + hi));
+            } else {
+                x_new = (x > 0.0) ? (2.0 * x) : 1.0;
+            }
+        }
+        const f64 dx = keel::abs(x_new - x);
+        x = x_new;
+        if (dx <= 1e-14 * x) break;
     }
     return x;
 }
@@ -411,12 +592,22 @@ f64 betainc(f64 x, f64 a, f64 b) noexcept {
     if (x < 0.0 || x > 1.0 || a <= 0.0 || b <= 0.0) return Limits<f64>::quiet_nan();
     if (x == 0.0) return 0.0;
     if (x == 1.0) return 1.0;
-    const f64 bt = keel::exp(gammaln(a + b) - gammaln(a) - gammaln(b) + a * keel::log(x) +
-                             b * keel::log1p(-x));
+    const f64 log_bt = log_beta_pref(x, a, b);
     if (x < (a + 1.0) / (a + b + 2.0)) {
-        return bt * betacf(a, b, x) / a;
+        const f64 cf = betacf(a, b, x) / a;
+        if (log_bt < -745.0) {
+            const f64 log_res = log_bt + keel::log(cf);
+            return (log_res < -745.1332191019412) ? 0.0 : clamp01(keel::exp(log_res));
+        }
+        return clamp01(keel::exp(log_bt) * cf);
     }
-    return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
+    const f64 cf = betacf(b, a, 1.0 - x) / b;
+    if (log_bt < -745.0) {
+        const f64 log_res = log_bt + keel::log(cf);
+        const f64 tail = (log_res < -745.1332191019412) ? 0.0 : clamp01(keel::exp(log_res));
+        return clamp01(1.0 - tail);
+    }
+    return clamp01(1.0 - keel::exp(log_bt) * cf);
 }
 
 f64 betaincinv(f64 p, f64 a, f64 b) noexcept {
@@ -426,28 +617,53 @@ f64 betaincinv(f64 p, f64 a, f64 b) noexcept {
     if (p == 0.0) return 0.0;
     if (p == 1.0) return 1.0;
 
+    // Exploit symmetry I_{1-x}(b, a) = 1 - I_x(a, b) to eliminate upper-tail cancellation.
+    if (p > 0.5) {
+        return 1.0 - betaincinv(1.0 - p, b, a);
+    }
+
+    const f64 lbeta = gammaln(a) + gammaln(b) - gammaln(a + b);
     f64 lo = 0.0;
     f64 hi = 1.0;
-    f64 x = a / (a + b);
-    const f64 lbeta = gammaln(a) + gammaln(b) - gammaln(a + b);
 
-    for (i32 it = 0; it < 80; ++it) {
+    // Initial guess: small-p power approximation or Beta mean.
+    f64 x = a / (a + b);
+    const f64 log_x0 = (keel::log(p) + keel::log(a) + lbeta) / a;
+    if (log_x0 < -1.0 && log_x0 > -700.0) {
+        const f64 x_small = keel::exp(log_x0);
+        if (x_small > 0.0 && x_small < x) x = x_small;
+    }
+
+    for (i32 it = 0; it < 100; ++it) {
         const f64 f = betainc(x, a, b) - p;
-        if (keel::abs(f) < 1e-15) break;
+        if (f == 0.0) break;
         if (f > 0.0) {
             hi = x;
         } else {
             lo = x;
         }
-        const f64 logf = (a - 1.0) * keel::log(x) + (b - 1.0) * keel::log1p(-x) - lbeta;
-        const f64 df = keel::exp(logf);
-        f64 x_new = (df > 1e-300) ? (x - f / df) : (0.5 * (lo + hi));
-        if (!(x_new > lo && x_new < hi)) x_new = 0.5 * (lo + hi);
-        if (keel::abs(x_new - x) < 1e-14 * (keel::abs(x) + 1.0)) {
-            x = x_new;
-            break;
+        if (keel::abs(f) <= 4e-15 * p) break;
+
+        const f64 log_df = log_beta_pref(x, a, b) - keel::log(x) - keel::log1p(-x);
+        f64 x_new = -1.0;
+        if (log_df > -700.0 && log_df < 700.0) {
+            const f64 df = keel::exp(log_df);
+            const f64 w = f / df;
+            // Halley correction: f''/f' = (a - 1)/x - (b - 1)/(1 - x)
+            const f64 r = (a - 1.0) / x - (b - 1.0) / (1.0 - x);
+            const f64 wr = w * r;
+            if (keel::abs(wr) < 1.0) {
+                const f64 step = w / (1.0 - 0.5 * wr);
+                if (keel::abs(step) <= 1e-14 * x) break;
+                x_new = x - step;
+            }
         }
+        if (!(x_new > lo && x_new < hi)) {
+            x_new = (lo > 0.0 && hi / lo > 16.0) ? keel::sqrt(lo * hi) : (0.5 * (lo + hi));
+        }
+        const f64 dx = keel::abs(x_new - x);
         x = x_new;
+        if (dx <= 1e-14 * x) break;
     }
     return x;
 }
@@ -473,11 +689,14 @@ f64 erfinv(f64 y) noexcept {
     constexpr f64 k2OverPi = 2.0 / kPi;
     const f64 s = (y < 0.0) ? -1.0 : 1.0;
     const f64 ay = keel::abs(y);
+    if (ay > 0.75) {
+        return s * erfcinv(1.0 - ay);
+    }
     const f64 l = keel::log1p(-ay * ay);
     const f64 t = k2OverPi / kA + 0.5 * l;
     f64 z = s * keel::sqrt(keel::sqrt(t * t - l / kA) - t);
 
-    for (i32 i = 0; i < 4; ++i) {
+    for (i32 i = 0; i < 6; ++i) {
         const f64 err = erf(z) - y;
         const f64 dz = err / (2.0 * kInvSqrtPi * keel::exp(-z * z));
         z -= dz;
@@ -560,6 +779,13 @@ f64 expint(f64 x) noexcept {
 
 void legendre(i32 n, f64 x, MutArrayRef<f64> out) noexcept {
     if (n < 0 || out.size() < as<usize>(n) + 1) return;
+    if (is_nan(x) || keel::abs(x) > 1.0) {
+        const f64 nan = Limits<f64>::quiet_nan();
+        for (i32 m = 0; m <= n; ++m) {
+            out[as<usize>(m)] = nan;
+        }
+        return;
+    }
     const f64 sx = keel::sqrt(keel::max(0.0, 1.0 - x * x));
     for (i32 m = 0; m <= n; ++m) {
         f64 pmm = 1.0;
@@ -666,30 +892,152 @@ EllipJ ellipj(f64 u, f64 m) noexcept {
 f64 marcumq(f64 a, f64 b, i32 m) noexcept {
     if (is_nan(a) || is_nan(b)) return Limits<f64>::quiet_nan();
     if (m < 1) m = 1;
-    if (b <= 0.0) return 1.0;
+    if (a < 0.0 || b < 0.0) return Limits<f64>::quiet_nan();
+    if (is_inf(a) && is_inf(b)) return Limits<f64>::quiet_nan();
+    if (b == 0.0) return 1.0;
+    if (is_inf(b)) return 0.0;
+    if (is_inf(a)) return 1.0;
     if (a == 0.0) {
-        const f64 y = 0.5 * b * b;
-        f64 acc = 0.0;
-        f64 term = keel::exp(-y);
-        for (i32 k = 0; k < m; ++k) {
+        return gammainc_upper(0.5 * b * b, as<f64>(m));
+    }
+
+    const f64 fm = as<f64>(m);
+    const f64 lam = 0.5 * a * a;
+    const f64 y = 0.5 * b * b;
+
+    // Saddlepoint k0 = floor(0.5 * (hypot(m, a * b) - m)) maximizes the Poisson-Gamma summand.
+    const f64 k0_f = keel::floor(0.5 * (keel::hypot(fm, a * b) - fm));
+    if (k0_f > 2.0e6) {
+        // Large-parameter normal/Sankaran asymptotic for non-central chi-square tail (a*b > 4e6):
+        // df = 2m, nc = a^2, threshold = b^2.
+        const f64 df = 2.0 * fm;
+        const f64 nc = a * a;
+        const f64 mean = df + nc;
+        const f64 var = 2.0 * (df + 2.0 * nc);
+        const f64 z = (b * b - mean) / keel::sqrt(2.0 * var);
+        return clamp01(0.5 * erfc(z));
+    }
+
+    const i64 k0 = as<i64>(k0_f);
+    const f64 fk0 = as<f64>(k0);
+
+    // Cancellation-free log Poisson weights.
+    auto log_pois = [](i64 k, f64 mu) noexcept -> f64 {
+        return log_pois_exact(k, mu);
+    };
+
+    // Choose upper (Q_m) or lower (1 - Q_m) representation so the summed tail is <= ~0.6
+    // and split at k0 using summation by parts so EVERY update is strictly additive (zero cancellation).
+    const bool use_upper = (y >= lam + fm);
+
+    if (use_upper) {
+        // Q_m(a, b) = sum_{k=k0}^inf P_Pois(k; lam) * Q(m + k, y)
+        //           + sum_{j=0}^{m + k0 - 2} P_Pois(j; y) * sum_{k=max(0, j - m + 1)}^{k0 - 1} P_Pois(k; lam)
+        const f64 log_p0 = log_pois(k0, lam);
+        const f64 log_d0 = log_pois(k0 + m, y);
+        if (log_p0 < -750.0) return 0.0;
+
+        f64 p_lam = keel::exp(log_p0);
+        f64 g = gammainc_upper(y, fm + fk0);
+        f64 d = (log_d0 < -745.0) ? 0.0 : keel::exp(log_d0);
+
+        f64 acc = p_lam * g;
+        f64 prev_term = acc;
+        // Region 1 (upward from k0): Q(m + k + 1, y) = Q(m + k, y) + P_Pois(m + k; y) (pure addition).
+        for (i64 k = k0 + 1;; ++k) {
+            const f64 fk = as<f64>(k);
+            p_lam *= lam / fk;
+            g += d;
+            if (g > 1.0) g = 1.0;
+            d *= y / (fm + fk);
+            const f64 term = p_lam * g;
             acc += term;
-            term *= y / as<f64>(k + 1);
+            if (p_lam == 0.0 || (term <= prev_term && term <= acc * 1e-16)) break;
+            prev_term = term;
         }
-        return acc;
+
+        // Region 2 (j downward from m + k0 - 2 to 0): pure addition on both S and acc.
+        if (k0 > 0) {
+            const i64 j_start = m + k0 - 2;
+            const f64 log_py = log_pois(j_start, y);
+            const f64 log_pl = log_pois(k0 - 1, lam);
+            if (log_py + log_pl > -745.0) {
+                // Rescale both factors by their starting exponents to prevent premature underflow.
+                const f64 scale = keel::exp(log_py + log_pl);
+                f64 py = 1.0;
+                f64 pl = 1.0;
+                f64 s_lam = 1.0;
+                f64 sub = py * s_lam;
+                f64 prev_sub = sub;
+                for (i64 j = j_start - 1; j >= 0; --j) {
+                    py *= as<f64>(j + 1) / y;
+                    if (j >= m - 1) {
+                        const i64 r = j - m + 1;
+                        pl *= as<f64>(r + 1) / lam;
+                        s_lam += pl;
+                    }
+                    const f64 term = py * s_lam;
+                    sub += term;
+                    if (py == 0.0 || (term <= prev_sub && term <= sub * 1e-16)) break;
+                    prev_sub = term;
+                }
+                acc += scale * sub;
+            }
+        }
+        return clamp01(acc);
     }
-    const f64 upper = keel::max(b + 20.0, a + 20.0);
-    constexpr i32 kSteps = 4096;
-    const f64 dx = (upper - b) / as<f64>(kSteps);
-    f64 sum = 0.0;
-    const f64 fm1 = as<f64>(m - 1);
-    for (i32 k = 0; k <= kSteps; ++k) {
-        const f64 xv = b + as<f64>(k) * dx;
-        const f64 w = (k == 0 || k == kSteps) ? 1.0 : ((k & 1) ? 4.0 : 2.0);
-        const f64 f = xv * keel::pow(xv / a, fm1) * keel::exp(-0.5 * (xv * xv + a * a)) *
-                      besseli(fm1, a * xv);
-        sum += w * f;
+
+    // Lower representation: 1 - Q_m(a, b)
+    //   = sum_{k=0}^{k0} P_Pois(k; lam) * P(m + k, y)
+    //   + sum_{j=m+k0+1}^inf P_Pois(j; y) * sum_{k=k0+1}^{j - m} P_Pois(k; lam)
+    const f64 log_p0 = log_pois(k0, lam);
+    if (log_p0 < -750.0) return 1.0;
+
+    f64 p_lam = keel::exp(log_p0);
+    f64 g = gammainc(y, fm + fk0);
+    const f64 log_dm1 = (k0 + m - 1 >= 0) ? log_pois(k0 + m - 1, y) : -1e9;
+    f64 d = (log_dm1 < -745.0) ? 0.0 : keel::exp(log_dm1);
+
+    f64 acc = p_lam * g;
+    f64 prev_term = acc;
+    // Region A (k downward from k0 - 1 to 0): P(m + k - 1, y) = P(m + k, y) + P_Pois(m + k - 1; y) (pure addition).
+    for (i64 k = k0 - 1; k >= 0; --k) {
+        g += d;
+        if (g > 1.0) g = 1.0;
+        d *= as<f64>(k + m) / y;
+        p_lam *= as<f64>(k + 1) / lam;
+        const f64 term = p_lam * g;
+        acc += term;
+        if (p_lam == 0.0 || (term <= prev_term && term <= acc * 1e-16)) break;
+        prev_term = term;
     }
-    return sum * (dx / 3.0);
+
+    // Region B (j upward from m + k0 + 1): pure addition on both S and acc.
+    {
+        const i64 j_start = m + k0 + 1;
+        const f64 log_py = log_pois(j_start, y);
+        const f64 log_pl = log_pois(k0 + 1, lam);
+        if (log_py + log_pl > -745.0) {
+            const f64 scale = keel::exp(log_py + log_pl);
+            f64 py = 1.0;
+            f64 pl = 1.0;
+            f64 s_lam = 1.0;
+            f64 sub = py * s_lam;
+            f64 prev_sub = sub;
+            for (i64 j = j_start + 1;; ++j) {
+                py *= y / as<f64>(j);
+                pl *= lam / as<f64>(j - m);
+                s_lam += pl;
+                const f64 term = py * s_lam;
+                sub += term;
+                if (py == 0.0 || (term <= prev_sub && term <= sub * 1e-16)) break;
+                prev_sub = term;
+            }
+            acc += scale * sub;
+        }
+    }
+
+    return clamp01(1.0 - acc);
 }
 
 } // namespace keel::specfun

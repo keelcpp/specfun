@@ -10,6 +10,30 @@ constexpr f64 kEps = 1e-16;
 constexpr f64 kFpMin = 1e-300;
 constexpr i32 kMaxIter = 10000;
 constexpr f64 kXMin = 2.0;
+constexpr f64 kLn2 = 0.693147180559945309417232121458176568;
+constexpr f64 kMaxOrder = 1.0e7;
+
+// Modular sin(pi * x) and cos(pi * x) avoiding catastrophic precision loss for large |x|.
+f64 sinpi_exact(f64 x) noexcept {
+    f64 r = keel::fmod(x, 2.0);
+    if (r < 0.0) r += 2.0;
+    if (r == 0.0 || r == 1.0) return 0.0;
+    if (r == 0.5) return 1.0;
+    if (r == 1.5) return -1.0;
+    if (r > 1.0) return -keel::sin(kPi * (r - 1.0));
+    if (r > 0.5) return keel::sin(kPi * (1.0 - r));
+    return keel::sin(kPi * r);
+}
+
+f64 cospi_exact(f64 x) noexcept {
+    f64 r = keel::fmod(keel::abs(x), 2.0);
+    if (r == 0.0) return 1.0;
+    if (r == 1.0) return -1.0;
+    if (r == 0.5 || r == 1.5) return 0.0;
+    if (r > 1.0) r = 2.0 - r;
+    if (r > 0.5) return -keel::cos(kPi * (1.0 - r));
+    return keel::cos(kPi * r);
+}
 
 // Chebyshev evaluation for Temme's gamma1 / gamma2 helper on x in [-0.5, 0.5].
 f64 chebev(f64 a, f64 b, const f64* c, i32 m, f64 x) noexcept {
@@ -46,7 +70,8 @@ void beschb(f64 x, f64& gam1, f64& gam2, f64& gampl, f64& gammi) noexcept {
 }
 
 // Computes J_xnu(x), Y_xnu(x), J'_xnu(x), Y'_xnu(x) for x > 0 and xnu >= 0
-// via Steed's continued fractions + Temme's series (Numerical Recipes bessjy).
+// via Steed's continued fractions + Temme's series (Numerical Recipes bessjy),
+// with power-of-two rescaling to prevent overflow/underflow at large orders.
 void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
     const i32 nl = (x < kXMin) ? as<i32>(xnu + 0.5)
                                : keel::max(i32{0}, as<i32>(xnu - x + 1.5));
@@ -75,16 +100,23 @@ void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
         if (keel::abs(del - 1.0) < kEps) break;
     }
 
-    f64 rjl = as<f64>(isign) * kFpMin;
+    f64 rjl = as<f64>(isign);
     f64 rjpl = h * rjl;
     const f64 rjl1 = rjl;
     const f64 rjp1 = rjpl;
+    i32 rj_shift = 0;
     f64 fact = xnu * xi;
     for (i32 l = nl; l >= 1; --l) {
         const f64 rjtemp = fact * rjl + rjpl;
         fact -= xi;
         rjpl = fact * rjtemp - rjl;
         rjl = rjtemp;
+        const f64 mag = keel::max(keel::abs(rjl), keel::abs(rjpl));
+        if (mag > 1.0e100) {
+            rjl = keel::ldexp(rjl, -300);
+            rjpl = keel::ldexp(rjpl, -300);
+            rj_shift += 300;
+        }
     }
     if (rjl == 0.0) rjl = kEps;
     const f64 f = rjpl / rjl;
@@ -179,20 +211,23 @@ void bessjy(f64 x, f64 xnu, f64& rj, f64& ry, f64& rjp, f64& ryp) noexcept {
     }
 
     fact = rjmu / rjl;
-    rj = rjl1 * fact;
-    rjp = rjp1 * fact;
+    rj = keel::ldexp(rjl1 * fact, -rj_shift);
+    rjp = keel::ldexp(rjp1 * fact, -rj_shift);
     for (i32 i = 1; i <= nl; ++i) {
         const f64 rytemp = (xmu + as<f64>(i)) * xi2 * ry1 - rymu;
         rymu = ry1;
         ry1 = rytemp;
+        if (is_inf(rymu)) break;
     }
     ry = rymu;
     ryp = xnu * xi * rymu - ry1;
 }
 
-// Computes I_xnu(x), K_xnu(x), I'_xnu(x), K'_xnu(x) for x > 0 and xnu >= 0
-// via Steed's continued fractions + Temme's series (Numerical Recipes bessik).
-void bessik(f64 x, f64 xnu, f64& ri, f64& rk, f64& rip, f64& rkp) noexcept {
+// Computes exponentially scaled modified Bessel functions for x > 0 and xnu >= 0:
+//   I_xnu(x) = ri_s * exp(x) * 2^(-ri_shift)
+//   K_xnu(x) = rk_s * exp(-x) * 2^(rk_shift)
+// Completely avoids exp(-x) underflow for x > 700 and intermediate recurrence overflow for large xnu.
+void bessik_scaled(f64 x, f64 xnu, f64& ri_s, i32& ri_shift, f64& rk_s, i32& rk_shift) noexcept {
     const i32 nl = as<i32>(xnu + 0.5);
     const f64 xmu = xnu - as<f64>(nl);
     const f64 xmu2 = xmu * xmu;
@@ -213,21 +248,28 @@ void bessik(f64 x, f64 xnu, f64& ri, f64& rk, f64& rip, f64& rkp) noexcept {
         if (keel::abs(del - 1.0) < kEps) break;
     }
 
-    f64 ril = kFpMin;
-    f64 ripl = h * ril;
-    const f64 ril1 = ril;
-    const f64 rip1 = ripl;
+    f64 ril = 1.0;
+    f64 ripl = h;
+    const f64 ril1 = 1.0;
+    ri_shift = 0;
     f64 fact = xnu * xi;
     for (i32 l = nl; l >= 1; --l) {
         const f64 ritemp = fact * ril + ripl;
         fact -= xi;
         ripl = fact * ritemp + ril;
         ril = ritemp;
+        const f64 mag = keel::max(keel::abs(ril), keel::abs(ripl));
+        if (mag > 1.0e100) {
+            ril = keel::ldexp(ril, -300);
+            ripl = keel::ldexp(ripl, -300);
+            ri_shift += 300;
+        }
     }
     const f64 f = ripl / ril;
 
-    f64 rkmu = 0.0;
-    f64 rk1 = 0.0;
+    // rkmu_s = exp(x) * K_xmu(x), rk1_s = exp(x) * K_{xmu+1}(x)
+    f64 rkmu_s = 0.0;
+    f64 rk1_s = 0.0;
     if (x < kXMin) {
         const f64 x2 = 0.5 * x;
         const f64 pimu = kPi * xmu;
@@ -260,8 +302,9 @@ void bessik(f64 x, f64 xnu, f64& ri, f64& rk, f64& rip, f64& rkp) noexcept {
             sum1 += del1;
             if (keel::abs(del) < keel::abs(sum) * kEps) break;
         }
-        rkmu = sum;
-        rk1 = sum1 * xi2;
+        const f64 ex = keel::exp(x);
+        rkmu_s = sum * ex;
+        rk1_s = (sum1 * xi2) * ex;
     } else {
         b = 2.0 * (1.0 + x);
         d = 1.0 / b;
@@ -291,21 +334,38 @@ void bessik(f64 x, f64 xnu, f64& ri, f64& rk, f64& rip, f64& rkp) noexcept {
             if (keel::abs(dels / s) < kEps) break;
         }
         h = a1 * h;
-        rkmu = keel::sqrt(kPi / (2.0 * x)) * keel::exp(-x) / s;
-        rk1 = rkmu * (xmu + x + 0.5 - h) * xi;
+        rkmu_s = keel::sqrt(kPi / (2.0 * x)) / s;
+        rk1_s = rkmu_s * (xmu + x + 0.5 - h) * xi;
     }
 
-    const f64 rkmup = xmu * xi * rkmu - rk1;
-    const f64 rimu = xi / (f * rkmu - rkmup);
-    ri = (rimu * ril1) / ril;
-    rip = (rimu * rip1) / ril;
+    const f64 rkmup_s = xmu * xi * rkmu_s - rk1_s;
+    const f64 rimu_s = xi / (f * rkmu_s - rkmup_s);
+    ri_s = (rimu_s * ril1) / ril;
+
+    rk_shift = 0;
     for (i32 i = 1; i <= nl; ++i) {
-        const f64 rktemp = (xmu + as<f64>(i)) * xi2 * rk1 + rkmu;
-        rkmu = rk1;
-        rk1 = rktemp;
+        const f64 rktemp = (xmu + as<f64>(i)) * xi2 * rk1_s + rkmu_s;
+        rkmu_s = rk1_s;
+        rk1_s = rktemp;
+        if (keel::abs(rk1_s) > 1.0e100) {
+            rkmu_s = keel::ldexp(rkmu_s, -300);
+            rk1_s = keel::ldexp(rk1_s, -300);
+            rk_shift += 300;
+        }
     }
-    rk = rkmu;
-    rkp = xnu * xi * rkmu - rk1;
+    rk_s = rkmu_s;
+}
+
+f64 combine_scaled(f64 val_s, i32 shift_pow2, f64 exp_arg) noexcept {
+    if (val_s == 0.0) return 0.0;
+    if (shift_pow2 == 0 && keel::abs(exp_arg) < 700.0) {
+        return val_s * keel::exp(exp_arg);
+    }
+    const f64 sign = (val_s < 0.0) ? -1.0 : 1.0;
+    const f64 log_res = keel::log(keel::abs(val_s)) + as<f64>(shift_pow2) * kLn2 + exp_arg;
+    if (log_res > 709.782712893384) return sign * Limits<f64>::infinity();
+    if (log_res < -745.1332191019412) return 0.0;
+    return sign * keel::exp(log_res);
 }
 
 bool is_near_integer(f64 v) noexcept { return is_finite(v) && keel::abs(v - keel::round(v)) < 1e-12; }
@@ -317,7 +377,7 @@ bool is_near_integer(f64 v) noexcept { return is_finite(v) && keel::abs(v - keel
 // ============================================================================
 
 f64 besselj(f64 nu, f64 x) noexcept {
-    if (is_nan(nu) || is_nan(x)) return Limits<f64>::quiet_nan();
+    if (is_nan(nu) || is_nan(x) || is_inf(nu)) return Limits<f64>::quiet_nan();
     if (x == 0.0) {
         if (nu == 0.0) return 1.0;
         if (nu > 0.0) return 0.0;
@@ -325,6 +385,7 @@ f64 besselj(f64 nu, f64 x) noexcept {
         return Limits<f64>::infinity();
     }
     if (is_inf(x)) return 0.0;
+    if (keel::abs(nu) > kMaxOrder) return Limits<f64>::quiet_nan();
     if (x < 0.0) {
         if (!is_near_integer(nu)) return Limits<f64>::quiet_nan();
         const i64 n = as<i64>(keel::round(nu));
@@ -341,7 +402,7 @@ f64 besselj(f64 nu, f64 x) noexcept {
         }
         f64 rj = 0.0, ry = 0.0, rjp = 0.0, ryp = 0.0;
         bessjy(x, anu, rj, ry, rjp, ryp);
-        return keel::cos(anu * kPi) * rj - keel::sin(anu * kPi) * ry;
+        return cospi_exact(anu) * rj - sinpi_exact(anu) * ry;
     }
     f64 rj = 0.0, ry = 0.0, rjp = 0.0, ryp = 0.0;
     bessjy(x, nu, rj, ry, rjp, ryp);
@@ -349,10 +410,11 @@ f64 besselj(f64 nu, f64 x) noexcept {
 }
 
 f64 bessely(f64 nu, f64 x) noexcept {
-    if (is_nan(nu) || is_nan(x)) return Limits<f64>::quiet_nan();
+    if (is_nan(nu) || is_nan(x) || is_inf(nu)) return Limits<f64>::quiet_nan();
     if (x < 0.0) return Limits<f64>::quiet_nan();
     if (x == 0.0) return -Limits<f64>::infinity();
     if (is_inf(x)) return 0.0;
+    if (keel::abs(nu) > kMaxOrder) return Limits<f64>::quiet_nan();
     if (nu < 0.0) {
         const f64 anu = -nu;
         if (is_near_integer(anu)) {
@@ -363,7 +425,7 @@ f64 bessely(f64 nu, f64 x) noexcept {
         }
         f64 rj = 0.0, ry = 0.0, rjp = 0.0, ryp = 0.0;
         bessjy(x, anu, rj, ry, rjp, ryp);
-        return keel::sin(anu * kPi) * rj + keel::cos(anu * kPi) * ry;
+        return sinpi_exact(anu) * rj + cospi_exact(anu) * ry;
     }
     f64 rj = 0.0, ry = 0.0, rjp = 0.0, ryp = 0.0;
     bessjy(x, nu, rj, ry, rjp, ryp);
@@ -371,7 +433,7 @@ f64 bessely(f64 nu, f64 x) noexcept {
 }
 
 f64 besseli(f64 nu, f64 x) noexcept {
-    if (is_nan(nu) || is_nan(x)) return Limits<f64>::quiet_nan();
+    if (is_nan(nu) || is_nan(x) || is_inf(nu)) return Limits<f64>::quiet_nan();
     if (x == 0.0) {
         if (nu == 0.0) return 1.0;
         if (nu > 0.0) return 0.0;
@@ -385,27 +447,34 @@ f64 besseli(f64 nu, f64 x) noexcept {
         return (n & 1) ? -v : v;
     }
     if (is_inf(x)) return Limits<f64>::infinity();
+    if (keel::abs(nu) > kMaxOrder) return Limits<f64>::quiet_nan();
     if (nu < 0.0) {
         const f64 anu = -nu;
-        f64 ri = 0.0, rk = 0.0, rip = 0.0, rkp = 0.0;
-        bessik(x, anu, ri, rk, rip, rkp);
+        f64 ri_s = 0.0, rk_s = 0.0;
+        i32 ri_shift = 0, rk_shift = 0;
+        bessik_scaled(x, anu, ri_s, ri_shift, rk_s, rk_shift);
+        const f64 ri = combine_scaled(ri_s, -ri_shift, x);
         if (is_near_integer(anu)) return ri;
-        return ri + (2.0 / kPi) * keel::sin(anu * kPi) * rk;
+        const f64 rk = combine_scaled(rk_s, rk_shift, -x);
+        return ri + (2.0 / kPi) * sinpi_exact(anu) * rk;
     }
-    f64 ri = 0.0, rk = 0.0, rip = 0.0, rkp = 0.0;
-    bessik(x, nu, ri, rk, rip, rkp);
-    return ri;
+    f64 ri_s = 0.0, rk_s = 0.0;
+    i32 ri_shift = 0, rk_shift = 0;
+    bessik_scaled(x, nu, ri_s, ri_shift, rk_s, rk_shift);
+    return combine_scaled(ri_s, -ri_shift, x);
 }
 
 f64 besselk(f64 nu, f64 x) noexcept {
-    if (is_nan(nu) || is_nan(x)) return Limits<f64>::quiet_nan();
+    if (is_nan(nu) || is_nan(x) || is_inf(nu)) return Limits<f64>::quiet_nan();
     if (x < 0.0) return Limits<f64>::quiet_nan();
     if (x == 0.0) return Limits<f64>::infinity();
     if (is_inf(x)) return 0.0;
     const f64 anu = keel::abs(nu); // K_{-nu}(x) = K_nu(x)
-    f64 ri = 0.0, rk = 0.0, rip = 0.0, rkp = 0.0;
-    bessik(x, anu, ri, rk, rip, rkp);
-    return rk;
+    if (anu > kMaxOrder) return Limits<f64>::quiet_nan();
+    f64 ri_s = 0.0, rk_s = 0.0;
+    i32 ri_shift = 0, rk_shift = 0;
+    bessik_scaled(x, anu, ri_s, ri_shift, rk_s, rk_shift);
+    return combine_scaled(rk_s, rk_shift, -x);
 }
 
 c64 besselh(f64 nu, i32 k, f64 x) noexcept {
@@ -424,6 +493,15 @@ c64 besselh(f64 nu, i32 k, f64 x) noexcept {
 f64 airy(i32 k, f64 x) noexcept {
     if (is_nan(x) || k < 0 || k > 3) return Limits<f64>::quiet_nan();
 
+    if (is_inf(x)) {
+        if (x > 0.0) {
+            // Ai(+inf) = Ai'(+inf) = 0; Bi(+inf) = Bi'(+inf) = +inf
+            return (k <= 1) ? 0.0 : Limits<f64>::infinity();
+        }
+        // Ai(-inf) = Bi(-inf) = 0; Ai'(-inf), Bi'(-inf) oscillate with unbounded amplitude
+        return (k == 0 || k == 2) ? 0.0 : Limits<f64>::quiet_nan();
+    }
+
     if (x == 0.0) {
         constexpr f64 kAi0 = 0.35502805388781723926;
         constexpr f64 kAip0 = -0.25881940379280679841;
@@ -438,20 +516,26 @@ f64 airy(i32 k, f64 x) noexcept {
         }
     }
 
-    constexpr f64 kInvPi = 0.318309886183790671537767526745028724;
     constexpr f64 kInvSqrt3 = 0.577350269189625764509148780501957456;
 
     if (x > 0.0) {
+        // For x > 110, zeta = (2/3)*x^(3/2) > 769: Ai, Ai' underflow to 0; Bi, Bi' overflow to +inf.
+        if (x > 110.0) {
+            return (k <= 1) ? 0.0 : Limits<f64>::infinity();
+        }
         const f64 zeta = (2.0 / 3.0) * x * keel::sqrt(x);
         const f64 sx3 = keel::sqrt(x / 3.0);
-        if (k == 0) return kInvPi * sx3 * besselk(1.0 / 3.0, zeta);
-        if (k == 1) return -(x * kInvSqrt3) * kInvPi * besselk(2.0 / 3.0, zeta);
+        if (k == 0) return keel::kInvPi * sx3 * besselk(1.0 / 3.0, zeta);
+        if (k == 1) return -(x * kInvSqrt3) * keel::kInvPi * besselk(2.0 / 3.0, zeta);
         if (k == 2) return sx3 * (besseli(1.0 / 3.0, zeta) + besseli(-1.0 / 3.0, zeta));
         return (x * kInvSqrt3) * (besseli(2.0 / 3.0, zeta) + besseli(-2.0 / 3.0, zeta));
     }
 
     const f64 ax = -x;
     const f64 zeta = (2.0 / 3.0) * ax * keel::sqrt(ax);
+    if (is_inf(zeta)) {
+        return (k == 0 || k == 2) ? 0.0 : Limits<f64>::quiet_nan();
+    }
     const f64 sax = keel::sqrt(ax);
     if (k == 0) return (sax / 3.0) * (besselj(1.0 / 3.0, zeta) + besselj(-1.0 / 3.0, zeta));
     if (k == 1) return (ax / 3.0) * (besselj(2.0 / 3.0, zeta) - besselj(-2.0 / 3.0, zeta));
